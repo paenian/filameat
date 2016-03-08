@@ -58,9 +58,33 @@ uint8_t buttonWas          = BUTTON_NONE;   //used by ReadButtons() for detectio
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
 
 //menu
+MenuSystem ms;
+Menu mm("Press Select");
+MenuItem mm_temp("Update Temp");
+MenuItem mm_duty("Update Duty Cycle");
 
+//state variables
+uint8_t  SetPoint;    //what temp we're trying to stay at
+uint8_t  MaxDutyCycle;   //0-100%, how often to turn the heater on at most
+uint8_t  CycleTime;   //length of a cycle, in milliseconds
+uint16_t CycleStart;  //this is counted in milliseconds, 
+bool     RelayOn;     //is the relay on?
 
 void setup(){
+  //fire up the LCD first
+  lcd.begin(16,2);
+  lcd.setCursor(0,1);
+  lcd.print("FilaMEAT =^..^= ");
+  lcd.setCursor(0,1);
+  lcd.print("Paul Chase  v0.0");
+
+  //initialize state
+  SetPoint = 0;           //start with heaters off
+  MaxDutyCycle = 50;      //seems like a good cycle for starters
+  RelayOn = false;        //start off
+  CycleTime = 10*1000;    //10 second cycle to start with
+  CycleStart = millis();  //this is when the current cycle started
+  
   //thermistor input
   pinMode(THERMISTOR_PIN, INPUT);         //ensure thermistor is an input
   digitalWrite(THERMISTOR_PIN, LOW);      //ensure pullup is off on thermistor
@@ -77,19 +101,23 @@ void setup(){
   digitalWrite(LCD_BACKLIGHT_PIN, HIGH);  //backlight control pin is high (on)
   pinMode(LCD_BACKLIGHT_PIN, OUTPUT);     //backlight is an output
 
-  //fire up the LCD
-  lcd.begin(16,2);
-  lcd.setCursor(0,1);
-  lcd.print("FilaMEAT 0.0    ");
-  lcd.setCursor(0,1);
-  lcd.print("Paul Chase      ");
-  delay(1000);
+  //set up the menu
+  mm.add_item(&mm_temp, &on_item1_selected);
+  mm.add_item(&mm_duty, &on_item2_selected);
+  ms.set_root_menu(&mm);
 }
 
 void loop(){
   #ifdef DEBUG
   uint16_t buttonVoltage = analogRead( BUTTON_ADC_PIN );
   uint16_t thermistorVoltage = analogRead (THERMISTOR_PIN);
+  lcd.setCursor( 0, 0 );
+  lcd.print("TH:");
+  lcd.print( readTemp(), DEC );
+  lcd.setCursor( 8, 0 );
+  lcd.print("BN:");
+  lcd.print( readButtons(), DEC );
+  
   lcd.setCursor( 0, 1 );
   lcd.print("TH:");
   lcd.print( thermistorVoltage, DEC );
@@ -100,11 +128,14 @@ void loop(){
   #endif
 
   //Step 1: update the LCD
+  displayStatus();
 
   //Step 2: update the menu
+  displayMenu();
 
   //Step 3: check buttons
-
+  menuHandler(readButtons());
+  
   //Step 4: manage heater
 }
 
@@ -113,16 +144,38 @@ void displayStatus(){
   lcd.setCursor(0,0);
   lcd.print("T");
   lcd.print(pad(readTemp(), 3));
+  lcd.print("/");
+  lcd.print(pad(SetPoint, 3));
+  lcd.setCursor(0,9);
+  lcd.print(pad(MaxDutyCycle, 2));
+  lcd.setCursor(0,13);
+  if(RelayOn){
+    lcd.print("ON ");
+  }else{
+    lcd.print("OFF");
+  }
 }
 
 String pad(uint8_t input, uint8_t len){
-  
+  String ret = String(input, DEC);
+  if(len >= 2){
+    if(input <= 9){
+      ret = " "+ret;
+    }
+  }
+  if(len >= 3){
+    if(input <= 99){
+      ret = " "+ret;
+    }
+  }
+  return ret;
 }
 
 //draw the menu - it gets the bottom line of the LCD, unless in debug mode.
 void displayMenu(){
-  lcd.setCursor(0,1);
 }
+
+
 
 //Read a button, and return the 
 uint8_t readButtons()
