@@ -9,8 +9,7 @@
 /*--------------------------------------------------------------------------------------
   Pins In Use
 --------------------------------------------------------------------------------------*/
-//LCDButtons.h PINS IN USE
-#define BUTTON_ADC_PIN           A0  // A0 is the button ADC input
+
 #define THERMISTOR_PIN           A1  // A1 is the thermistor read pin
 #define LCD_BACKLIGHT_PIN         10  // D10 controls LCD backlight
 
@@ -21,7 +20,7 @@
 /*--------------------------------------------------------------------------------------
   Global Variables
 --------------------------------------------------------------------------------------*/
-byte oldstamp			= 0;			 //Used in the relay timing - we don't want too much hysteresis.  Should be deprecated soon.
+uint8_t oldstamp			= 0;			 //Used in the relay timing - we don't want too much hysteresis.  Should be deprecated soon.
 bool relayState			= false;		 //True if the relay is on; False otherwise.
 
 

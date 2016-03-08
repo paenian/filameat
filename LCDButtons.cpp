@@ -18,7 +18,7 @@ LCDButtons::LCDButtons(LiquidCrystal lcd){
   Detect the button pressed and return the value
   Uses global values buttonWas, buttonJustPressed, buttonJustReleased.
 --------------------------------------------------------------------------------------*/
-byte LCDButtons::ReadButtons()
+uint8_t LCDButtons::ReadButtons()
 {
    unsigned int buttonVoltage;
    unsigned int thermistorVoltage;

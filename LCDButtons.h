@@ -37,6 +37,8 @@
 
 #include <LiquidCrystal.h>   // include LCD library
 
+#define BUTTON_ADC_PIN           A0  // A0 is the button ADC input
+
 // ADC readings expected for the 5 buttons on the ADC input
 #define RIGHT_10BIT_ADC         815  // right
 #define UP_10BIT_ADC            930  // up
@@ -61,14 +63,14 @@
 --------------------------------------------------------------------------------------*/
 class LCDButtons{
 public:
-	byte buttonJustPressed  = false;         //this will be true after a ReadButtons() call if triggered
-	byte buttonJustReleased = false;         //this will be true after a ReadButtons() call if triggered
-	byte buttonWas          = BUTTON_NONE;   //used by ReadButtons() for detection of button events
+	uint8_t buttonJustPressed  = false;         //this will be true after a ReadButtons() call if triggered
+	uint8_t buttonJustReleased = false;         //this will be true after a ReadButtons() call if triggered
+	uint8_t buttonWas          = BUTTON_NONE;   //used by ReadButtons() for detection of button events
 
 	//constructor
 	LCDButtons(LiquidCrystal lcd);
 
-	byte ReadButtons();
+	uint8_t ReadButtons();
 };
 
 #endif /* FILAMEAT_FULLTEST_LCDBUTTONS_H_ */
