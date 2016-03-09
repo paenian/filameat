@@ -46,7 +46,7 @@
 #define BUTTON_SELECT             5
 
 //all debugging is sent over the serial port
-#define DEBUG
+//#define DEBUG
 
 #define HYSTERESIS 3        //don't fret if we're within a few degrees
 
@@ -122,7 +122,7 @@ void setup(){
 }
 
 void loop(){
-#ifdef DEBUG
+#ifdef DEBUG2
   uint16_t buttonVoltage = analogRead( BUTTON_ADC_PIN );
   uint16_t thermistorVoltage = analogRead (THERMISTOR_PIN);
   Serial.print("Temperature: ");
@@ -130,9 +130,14 @@ void loop(){
   
   Serial.print("Thermistor: ");
   Serial.println( thermistorVoltage, DEC );
+
+  Serial.print("SetPoint: ");
+  Serial.println( SetPoint, DEC );
+
+  
   
   Serial.print("Button: ");
-  Serial.print( readButtons(), DEC );
+  Serial.println( readButtons(), DEC );
   
   Serial.print("ButtonRaw: ");
   Serial.println( buttonVoltage, DEC );
@@ -162,10 +167,22 @@ void manageHeater(){
   if(curCycle > CycleTime){
     CycleStart = millis();
     curCycle = 0;
+#ifdef DEBUG
+  Serial.println("New Cycle");
+#endif
+    return;
   }
 
+  Serial.print("curCycle:");
+  Serial.println(curCycle, DEC);
+  Serial.print("MaxDutyCycle:");
+  Serial.println(MaxDutyCycle, DEC);
+  Serial.print("CycleTime:");
+  Serial.println(CycleTime, DEC);
+  
+
   //We're never on at the start of a duty cycle
-  if(curCycle < (DutyCycle*CycleTime)/100){
+  if(curCycle < MaxDutyCycle*(CycleTime/100)){
     RelayOn = false;
     digitalWrite(RELAY_PIN, LOW);  //turn off the relay :-)
     return;
@@ -179,7 +196,7 @@ void manageHeater(){
   }
 
   //Should we be hotter?
-  if(temp < SetPoint-HYSTERESIS){
+  if(temp+HYSTERESIS < SetPoint){
     RelayOn = true;
     digitalWrite(RELAY_PIN, HIGH);  //turn on the relay :-)
   }
@@ -189,28 +206,28 @@ void manageHeater(){
 void displayStatus(){
   lcd.setCursor(0,0);
   lcd.print("T");
-  lcd.print(pad(readTemp(), 3));
+  lcd.print(padl(readTemp(), 3));
   if(ChangeTemp){
     lcd.print("*");
   }else{
     lcd.print("/");
   }
-  lcd.print(pad(SetPoint, 3));
+  lcd.print(padr(SetPoint, 3));
   if(ChangeTemp || ChangeDuty){
     lcd.print("*");
   }else{
     lcd.print(" ");
   }
   
-  lcd.setCursor(0,9);
-  lcd.print(pad(MaxDutyCycle, 2));
+  //lcd.setCursor(0,9);
+  lcd.print(padl(MaxDutyCycle, 2));
   if(ChangeDuty){
     lcd.print("*");
   }else{
     lcd.print(" ");
   }
   
-  lcd.setCursor(0,13);
+  //lcd.setCursor(0,13);
   if(RelayOn){
     lcd.print("ON ");
   }else{
@@ -218,7 +235,22 @@ void displayStatus(){
   }
 }
 
-String pad(uint8_t input, uint8_t len){
+String padr(uint8_t input, uint8_t len){
+  String ret = String(input, DEC);
+  if(len >= 2){
+    if(input <= 9){
+      ret = ret+" ";
+    }
+  }
+  if(len >= 3){
+    if(input <= 99){
+      ret = ret+" ";
+    }
+  }
+  return ret;
+}
+
+String padl(uint8_t input, uint8_t len){
   String ret = String(input, DEC);
   if(len >= 2){
     if(input <= 9){
@@ -235,21 +267,30 @@ String pad(uint8_t input, uint8_t len){
 
 //draw the menu - it gets the bottom line of the LCD, unless in debug mode.
 void displayMenu(){
-  lcd.setCursor(0,1);
+  
   // Display the menu
   Menu const* cp_menu = ms.get_current_menu();
 
-  //lcd.print(cp_menu->get_name());
-  lcd.print(cp_menu->get_selected()->get_name());
+  if(!ChangeTemp && !ChangeDuty){
+    lcd.setCursor(0,1);
+    lcd.print("                ");
+    lcd.setCursor(0,1);
+    //lcd.print(cp_menu->get_name());
+    lcd.print(cp_menu->get_selected()->get_name());
+  }
 }
 
 void menuHandler(uint8_t button){
+  if(!buttonJustPressed){
+    return;
+  }
+  buttonJustPressed = false;
   switch(button){
     case BUTTON_NONE:
       return;
     case BUTTON_LEFT:
       if(ChangeDuty){
-        DutyCycle = DutyCycle - 1;
+        MaxDutyCycle = MaxDutyCycle - 1;
         return;
       }
       if(ChangeTemp){
@@ -261,7 +302,7 @@ void menuHandler(uint8_t button){
       
     case BUTTON_RIGHT:
       if(ChangeDuty){
-        DutyCycle = DutyCycle + 1;
+        MaxDutyCycle = MaxDutyCycle + 1;
         return;
       }
       if(ChangeTemp){
@@ -273,7 +314,7 @@ void menuHandler(uint8_t button){
 
     case BUTTON_DOWN:
       if(ChangeDuty){
-        DutyCycle = DutyCycle - 1;
+        MaxDutyCycle = MaxDutyCycle - 1;
         return;
       }
       if(ChangeTemp){
@@ -285,7 +326,7 @@ void menuHandler(uint8_t button){
       
     case BUTTON_UP:
       if(ChangeDuty){
-        DutyCycle = DutyCycle + 1;
+        MaxDutyCycle = MaxDutyCycle + 1;
         return;
       }
       if(ChangeTemp){
@@ -296,8 +337,15 @@ void menuHandler(uint8_t button){
       break;
 
     case BUTTON_SELECT:
-      ChangeDuty = false;
-      ChangeTemp = false;
+      lcd.clear();
+      if(ChangeDuty){
+        ChangeDuty = false;
+        return;
+      }
+      if(ChangeTemp){
+        ChangeTemp = false;
+        return;
+      }
       ms.select();
       break;
   }
@@ -374,3 +422,70 @@ uint8_t readButtons()
  
    return(button);
 }
+
+short readTemp(){
+  short thermistorVoltage = 0;
+  short lowTemp = 0;
+  short highTemp = 0;
+  int i;
+  
+  //we sample a bunch of readings to get a stable thermistor value
+  for(i=0; i<OVERSAMPLENR; i++){
+    thermistorVoltage += analogRead (THERMISTOR_PIN);
+  }
+
+  #ifdef DEBUG2
+  Serial.print("oversample: ");
+  Serial.println( OVERSAMPLENR, DEC );
+  Serial.print("Tvolts: ");
+  Serial.println( thermistorVoltage, DEC );
+  #endif
+  
+
+  //this is a temperature overflow - greater than the sensor can handle.
+  //Receiving program should shut down.
+  if(thermistorVoltage < temptable[0][0]){
+    return 0;
+  }
+
+  //note the -2 - if we read off the other end of the table, we'll return 0
+  //That's a thermal underflow, which probably means the thermistor's unplugged.
+  for (i=1; i < 60; i++){
+    
+    if(thermistorVoltage < temptable[i][0]){
+      lowTemp = i;
+      highTemp = i-1;
+      break;
+    }
+  }
+  
+  #ifdef DEBUG3
+  Serial.print("lt[");
+  Serial.print(lowTemp, DEC);
+  Serial.print("][1] ");
+  Serial.println( temptable[lowTemp][1], DEC );
+
+  Serial.print("ht[");
+  Serial.print(highTemp, DEC);
+  Serial.print("][1] ");
+  Serial.println( temptable[highTemp][1], DEC );
+
+  Serial.print("tvolts: ");
+  Serial.println(thermistorVoltage, DEC);
+
+  Serial.print("ht[");
+  Serial.print(highTemp, DEC);
+  Serial.print("][0] ");
+  Serial.println( temptable[highTemp][0], DEC );
+
+  Serial.print("lt[");
+  Serial.print(lowTemp, DEC);
+  Serial.print("][0] ");
+  Serial.println( temptable[lowTemp][0], DEC );
+  #endif
+
+  
+  
+  return temptable[highTemp][1]-(temptable[highTemp][1]-temptable[lowTemp][1])*(thermistorVoltage-temptable[highTemp][0])/(temptable[lowTemp][0]-temptable[highTemp][0]);
+}
+
