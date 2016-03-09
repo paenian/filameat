@@ -66,11 +66,11 @@ const short temptable[][2] PROGMEM = {
   {1008 * OVERSAMPLENR, 0} //safety
 };
 
-uint8_t readTemp(){
+uint16_t readTemp(){
   uint16_t thermistorVoltage = 0;
-  uint8_t lowTemp = 0;
-  uint8_t highTemp = 0;
-  uint8_t i;
+  uint16_t lowTemp = 0;
+  uint16_t highTemp = 0;
+  uint16_t i;
   
   //we sample a bunch of readings to get a stable thermistor value
   for(i=0; i<OVERSAMPLENR; i++){

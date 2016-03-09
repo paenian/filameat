@@ -16,7 +16,8 @@
  *   D9: LCD E    
  *   D10: LCD Backlight (high = on, also has pullup high so default is on)
  *   
- *   Initially, only implementing a simple temperature/setpoint display and the ability to change the setpoint.
+ *   The system is entirely state-based, and does not use any interrupts.
+ *   This means the heater could be on for up to 750ms longer than it should be... which I think is OK.
  */
 
  #include <LiquidCrystal.h>
@@ -44,9 +45,10 @@
 #define BUTTON_LEFT               4
 #define BUTTON_SELECT             5
 
-//uncomment this line to make the bottom row of the LCD display the thermistor
-//and button voltages within readButtons.
+//all debugging is sent over the serial port
 #define DEBUG
+
+#define HYSTERESIS 3        //don't fret if we're within a few degrees
 
 ////////global variables
 //buttons
@@ -60,15 +62,19 @@ LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
 //menu
 MenuSystem ms;
 Menu mm("Press Select");
-MenuItem mm_temp("Update Temp");
-MenuItem mm_duty("Update Duty Cycle");
+MenuItem mm_temp("Change Temp");
+MenuItem mm_duty("Change Duty Cycle");
 
 //state variables
-uint8_t  SetPoint;    //what temp we're trying to stay at
-uint8_t  MaxDutyCycle;   //0-100%, how often to turn the heater on at most
-uint8_t  CycleTime;   //length of a cycle, in milliseconds
-uint16_t CycleStart;  //this is counted in milliseconds, 
-bool     RelayOn;     //is the relay on?
+uint16_t   SetPoint;     //what temp we're trying to stay at
+uint16_t   MaxDutyCycle; //0-100%, how often to turn the heater on at most
+uint16_t   CycleTime;    //length of a cycle, in milliseconds
+uint16_t   CycleStart;   //this is counted in milliseconds, 
+uint16_t   OnStart;      //time when the heater turned on - to prevent overclicky, we have a minimum on time
+uint16_t   MinOnTime;    //how long is the minimum time the heater can heat for
+bool       RelayOn;      //is the relay on?
+bool       ChangeTemp;   //are we changing the temp?
+bool       ChangeDuty;   //are we changing the duty cycle?
 
 void setup(){
   //fire up the LCD first
@@ -78,12 +84,20 @@ void setup(){
   lcd.setCursor(0,1);
   lcd.print("Paul Chase  v0.0");
 
+#ifdef DEBUG
+  Serial.begin(9600);
+#endif
+
   //initialize state
   SetPoint = 0;           //start with heaters off
   MaxDutyCycle = 50;      //seems like a good cycle for starters
   RelayOn = false;        //start off
   CycleTime = 10*1000;    //10 second cycle to start with
+  ChangeTemp = false;     //in change temp mode, the direction buttons change the temperature
+  ChangeDuty = false;     //in change duty mode, the direction buttons change the duty cycle
   CycleStart = millis();  //this is when the current cycle started
+  OnStart = 0;            //when the heater started to go on
+  MinOnTime = 2000;       //minimum time to keep the heater on
   
   //thermistor input
   pinMode(THERMISTOR_PIN, INPUT);         //ensure thermistor is an input
@@ -102,41 +116,73 @@ void setup(){
   pinMode(LCD_BACKLIGHT_PIN, OUTPUT);     //backlight is an output
 
   //set up the menu
-  mm.add_item(&mm_temp, &on_item1_selected);
-  mm.add_item(&mm_duty, &on_item2_selected);
+  mm.add_item(&mm_temp, &on_temp_selected);
+  mm.add_item(&mm_duty, &on_duty_selected);
   ms.set_root_menu(&mm);
 }
 
 void loop(){
-  #ifdef DEBUG
+#ifdef DEBUG
   uint16_t buttonVoltage = analogRead( BUTTON_ADC_PIN );
   uint16_t thermistorVoltage = analogRead (THERMISTOR_PIN);
-  lcd.setCursor( 0, 0 );
-  lcd.print("TH:");
-  lcd.print( readTemp(), DEC );
-  lcd.setCursor( 8, 0 );
-  lcd.print("BN:");
-  lcd.print( readButtons(), DEC );
+  Serial.print("Temperature: ");
+  Serial.println( readTemp(), DEC );
   
-  lcd.setCursor( 0, 1 );
-  lcd.print("TH:");
-  lcd.print( thermistorVoltage, DEC );
-  lcd.setCursor( 8, 1 );
-  lcd.print("BN:");
-  lcd.print( buttonVoltage, DEC );
-  delay(250); //wait a bit so the voltages don't flicker stupid fast... this means it takes 1/4 of a second to read a button, though.
-  #endif
+  Serial.print("Thermistor: ");
+  Serial.println( thermistorVoltage, DEC );
+  
+  Serial.print("Button: ");
+  Serial.print( readButtons(), DEC );
+  
+  Serial.print("ButtonRaw: ");
+  Serial.println( buttonVoltage, DEC );
+
+  Serial.println();
+  delay(250);
+#endif
 
   //Step 1: update the LCD
   displayStatus();
 
-  //Step 2: update the menu
-  displayMenu();
-
-  //Step 3: check buttons
+  //Step 2: check buttons
   menuHandler(readButtons());
   
+  //Step 3: update the menu
+  displayMenu();
+  
   //Step 4: manage heater
+  manageHeater(); //todo: make this operate on an interrupt... right now it can be delayed.
+}
+
+void manageHeater(){
+  //read the current temperature
+  uint16_t temp = readTemp();
+  uint16_t curCycle = millis() - CycleStart;
+
+  if(curCycle > CycleTime){
+    CycleStart = millis();
+    curCycle = 0;
+  }
+
+  //We're never on at the start of a duty cycle
+  if(curCycle < (DutyCycle*CycleTime)/100){
+    RelayOn = false;
+    digitalWrite(RELAY_PIN, LOW);  //turn off the relay :-)
+    return;
+  }
+  
+  //Are we too hot?
+  if(temp > SetPoint){
+    RelayOn = false;
+    digitalWrite(RELAY_PIN, LOW);  //turn off the relay :-)
+    return;
+  }
+
+  //Should we be hotter?
+  if(temp < SetPoint-HYSTERESIS){
+    RelayOn = true;
+    digitalWrite(RELAY_PIN, HIGH);  //turn on the relay :-)
+  }
 }
 
 //draw the top line
@@ -144,10 +190,26 @@ void displayStatus(){
   lcd.setCursor(0,0);
   lcd.print("T");
   lcd.print(pad(readTemp(), 3));
-  lcd.print("/");
+  if(ChangeTemp){
+    lcd.print("*");
+  }else{
+    lcd.print("/");
+  }
   lcd.print(pad(SetPoint, 3));
+  if(ChangeTemp || ChangeDuty){
+    lcd.print("*");
+  }else{
+    lcd.print(" ");
+  }
+  
   lcd.setCursor(0,9);
   lcd.print(pad(MaxDutyCycle, 2));
+  if(ChangeDuty){
+    lcd.print("*");
+  }else{
+    lcd.print(" ");
+  }
+  
   lcd.setCursor(0,13);
   if(RelayOn){
     lcd.print("ON ");
@@ -173,9 +235,89 @@ String pad(uint8_t input, uint8_t len){
 
 //draw the menu - it gets the bottom line of the LCD, unless in debug mode.
 void displayMenu(){
+  lcd.setCursor(0,1);
+  // Display the menu
+  Menu const* cp_menu = ms.get_current_menu();
+
+  //lcd.print(cp_menu->get_name());
+  lcd.print(cp_menu->get_selected()->get_name());
 }
 
+void menuHandler(uint8_t button){
+  switch(button){
+    case BUTTON_NONE:
+      return;
+    case BUTTON_LEFT:
+      if(ChangeDuty){
+        DutyCycle = DutyCycle - 1;
+        return;
+      }
+      if(ChangeTemp){
+        SetPoint = SetPoint - 1;
+        return;
+      }
+      ms.back();
+      break;
+      
+    case BUTTON_RIGHT:
+      if(ChangeDuty){
+        DutyCycle = DutyCycle + 1;
+        return;
+      }
+      if(ChangeTemp){
+        SetPoint = SetPoint + 1;
+        return;
+      }
+      ms.select();
+      break;
 
+    case BUTTON_DOWN:
+      if(ChangeDuty){
+        DutyCycle = DutyCycle - 1;
+        return;
+      }
+      if(ChangeTemp){
+        SetPoint = SetPoint - 10;
+        return;
+      }
+      ms.next();
+      break;
+      
+    case BUTTON_UP:
+      if(ChangeDuty){
+        DutyCycle = DutyCycle + 1;
+        return;
+      }
+      if(ChangeTemp){
+        SetPoint = SetPoint + 10;
+        return;
+      }
+      ms.prev();
+      break;
+
+    case BUTTON_SELECT:
+      ChangeDuty = false;
+      ChangeTemp = false;
+      ms.select();
+      break;
+  }
+}
+
+void on_temp_selected(MenuItem* p_menu_item){
+  lcd.setCursor(0,1);
+  lcd.print("Changing Temp   ");
+  delay(500);
+  ChangeTemp = true;
+  ChangeDuty = false;
+}
+
+void on_duty_selected(MenuItem* p_menu_item){
+  lcd.setCursor(0,1);
+  lcd.print("Changing Duty   ");
+  delay(500);
+  ChangeTemp = false;
+  ChangeDuty = true;
+}
 
 //Read a button, and return the 
 uint8_t readButtons()
