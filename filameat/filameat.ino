@@ -182,7 +182,7 @@ void manageHeater(){
   
 
   //We're never on at the start of a duty cycle
-  if(curCycle < MaxDutyCycle*(CycleTime/100)){
+  if(curCycle < CycleTime - MaxDutyCycle*(CycleTime/100)){
     RelayOn = false;
     digitalWrite(RELAY_PIN, LOW);  //turn off the relay :-)
     return;
